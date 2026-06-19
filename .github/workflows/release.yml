@@ -1,5 +1,4 @@
 name: Manual Release
-
 on:
   workflow_dispatch:       # ← this is the manual trigger button
     inputs:
@@ -21,6 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: read
 
     steps:
       - name: Checkout
@@ -28,11 +28,90 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up Node.js for md-to-pdf
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install md-to-pdf
+        run: npm install -g md-to-pdf
+
+      - name: Fetch PR details for email
+        id: pr_details
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Get the latest merged PR details
+          PR_DATA=$(gh pr list \
+            --state merged \
+            --limit 1 \
+            --json title,body,author,labels \
+            --jq '.[0]')
+
+          PR_TITLE=$(echo $PR_DATA | jq -r '.title')
+          PR_BODY=$(echo $PR_DATA | jq -r '.body // "No description provided"')
+          PR_AUTHOR=$(echo $PR_DATA | jq -r '.author.login')
+          PR_LABELS=$(echo $PR_DATA | jq -r '[.labels[].name] | join(", ")')
+
+          echo "pr_title=$PR_TITLE" >> $GITHUB_OUTPUT
+          echo "pr_author=$PR_AUTHOR" >> $GITHUB_OUTPUT
+          echo "pr_labels=$PR_LABELS" >> $GITHUB_OUTPUT
+          echo "pr_body=$PR_BODY" >> $GITHUB_OUTPUT
+
+      - name: Generate Release Notes MD
+        run: |
+          cat << 'EOF' > release_notes.md
+          # Release ${{ github.event.inputs.version }}
+
+          ## PR Details
+          - **Title:** ${{ steps.pr_details.outputs.pr_title }}
+          - **Author:** ${{ steps.pr_details.outputs.pr_author }}
+          - **Labels:** ${{ steps.pr_details.outputs.pr_labels }}
+
+          ## Description
+          ${{ steps.pr_details.outputs.pr_body }}
+
+          ## What Changed
+          This release was triggered manually for version ${{ github.event.inputs.version }}.
+          See the full release on GitHub for the complete changelog.
+          EOF
+
+      - name: Convert MD to PDF
+        run: md-to-pdf release_notes.md
+
+      - name: Send Release Email
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "🚀 New Release ${{ github.event.inputs.version }} — ${{ github.repository }}"
+          to: ${{ secrets.MAIL_RECIPIENTS }}
+          from: GitHub Actions <${{ secrets.MAIL_USERNAME }}>
+          body: |
+            Hi team,
+
+            A new release has been published! Here are the details:
+
+            📌 Version:  ${{ github.event.inputs.version }}
+            📝 PR Title: ${{ steps.pr_details.outputs.pr_title }}
+            👤 Author:   ${{ steps.pr_details.outputs.pr_author }}
+            🏷️ Labels:   ${{ steps.pr_details.outputs.pr_labels }}
+
+            The full release notes are attached as a PDF.
+
+            🔗 View release: https://github.com/${{ github.repository }}/releases/tag/${{ github.event.inputs.version }}
+
+            — GitHub Actions Bot
+          attachments: release_notes.pdf
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.version }}
           name: Release ${{ github.event.inputs.version }}
           generate_release_notes: true
-          prerelease: ${{ github.event.inputs.version == 'true' }}
+          prerelease: ${{ github.event.inputs.prerelease == 'true' }}
           draft: false
