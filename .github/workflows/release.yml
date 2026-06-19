@@ -76,14 +76,10 @@ jobs:
           See the full release on GitHub for the complete changelog.
           EOF
 
-      - name: Create Puppeteer config
-        run: |
-          cat << 'EOF' > puppeteer-config.json
-          {"args": ["--no-sandbox"]}
-          EOF
-
       - name: Convert MD to PDF
-        run: md-to-pdf release_notes.md --launch-options puppeteer-config.json
+        run: |
+          LAUNCH_OPTS='{"args": ["--no-sandbox"]}'
+          md-to-pdf release_notes.md --launch-options "$LAUNCH_OPTS"
 
       - name: Send Release Email
         uses: dawidd6/action-send-mail@v3
